@@ -1,0 +1,39 @@
+{
+  "name": "browser-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Security-first MCP browser control for a visible Chrome session.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=.env dist/src/main.js",
+    "tunnel:doctor": "node dist/src/tunnel-cli.js doctor",
+    "tunnel:run": "node dist/src/tunnel-cli.js run",
+    "e2e:partslink24": "node dist/src/scenarios/partslink24-cli.js",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "http-proxy": "^1.18.1",
+    "pino": "^9.9.0",
+    "playwright-core": "^1.55.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/http-proxy": "^1.17.16",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.42.0",
+    "eslint": "^9.35.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.19.3",
+    "vitest": "^3.2.4"
+  }
+}

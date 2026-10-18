@@ -1,0 +1,57 @@
+version: "3.8"
+
+services:
+  browser-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: browser-mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9230:9230"
+    environment:
+      - CDP_GATEWAY_TOKEN=${CDP_GATEWAY_TOKEN}
+      - CDP_ENDPOINT=http://chrome:9222
+      - GATEWAY_ENABLED=true
+      - GATEWAY_LISTEN_HOST=0.0.0.0
+      - GATEWAY_ALLOWED_CIDRS=172.16.0.0/12
+      - MCP_TRANSPORT=streamable-http
+      - MCP_LISTEN_HOST=0.0.0.0
+      - MCP_LISTEN_PORT=9230
+      - BROWSER_ALLOWED_DOMAINS=*
+      - LOG_FILE=/app/logs/browser-mcp.log
+      - LOG_LEVEL=info
+    volumes:
+      - mcp-logs:/app/logs
+    depends_on:
+      chrome:
+        condition: service_healthy
+    networks:
+      - mcp-net
+
+  chrome:
+    image: browserless/chrome:latest
+    container_name: chrome
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9222:9222"
+    environment:
+      - CONNECTION_TIMEOUT=300000
+      - MAX_CONCURRENT_SESSIONS=5
+      - MAX_QUEUE_LENGTH=20
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9222/json/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    shm_size: "2gb"
+    networks:
+      - mcp-net
+
+volumes:
+  mcp-logs:
+
+networks:
+  mcp-net:
+    driver: bridge
