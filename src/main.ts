@@ -14,6 +14,7 @@ import { createHumanGate } from './human/gate.js';
 import { logger } from './logging/logger.js';
 import { createMcpHttpServer, type McpHttpServerHandle } from './mcp/http.js';
 import { createBrowserMcpServer, type BrowserMcpServerHandle } from './mcp/server.js';
+import { createSpecStore } from './spec/index.js';
 import { createDomainPolicy } from './policy/domains.js';
 
 function readPackageVersion(): string {
@@ -137,8 +138,10 @@ try {
     adapter,
     domainPolicy: createDomainPolicy([]),
     humanGate,
+    specStore: createSpecStore(config.siteSpecsDir),
     version: readPackageVersion(),
   });
+  logger.info({ siteSpecsDir: config.siteSpecsDir }, 'learned site specs directory configured');
 
   if (config.mcp.transport === 'stdio') {
     // STDIO: stdout belongs to the MCP protocol; logs already go to stderr.

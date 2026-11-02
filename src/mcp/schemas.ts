@@ -316,7 +316,7 @@ export const toolErrorDetailSchema = z.object({
   code: z
     .string()
     .describe(
-      'Stable machine-readable code, e.g. domain_forbidden, sensitive_field_forbidden, human_required, human_timeout, captcha_detected, challenge_still_present, confirmation_required, not_connected, timeout.',
+      'Stable machine-readable code, e.g. domain_forbidden, sensitive_field_forbidden, human_required, human_timeout, captcha_detected, challenge_still_present, confirmation_required, not_connected, timeout, site_no_data, spec_not_found, spec_unknown_op, spec_invalid, specs_dir_missing.',
     ),
   message: z.string(),
   retryable: z.boolean().describe('True when retrying after a corrective action may succeed.'),
@@ -494,6 +494,102 @@ export const humanResumeOutputShape: z.ZodRawShape = {
   resumed: z.literal(true),
   state: z.literal('ready'),
   status: adapterStatusSchema,
+};
+
+// ---------------------------------------------------------------------------
+// Learned site specs (site_list / site_op / site_check)
+// ---------------------------------------------------------------------------
+
+const siteNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .describe('Spec name = its file base name in the spec directory (no path, no ".json")');
+
+const siteParamsSchema = z
+  .record(z.string(), z.string())
+  .describe('Values for the {placeholders} of the op (e.g. {"sku": "1075-80"}); unknown keys are ignored');
+
+export const siteParamSchema = z.object({
+  name: z.string(),
+  example: z.string().optional(),
+  hint: z.string().optional(),
+});
+
+export const specOpSummarySchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  transport: z.enum(['http', 'browser-mcp']),
+  params: z.array(siteParamSchema),
+  hasCheck: z.boolean().describe('True when the op carries the holdout check contract.'),
+});
+
+export const specSummarySchema = z.object({
+  name: z.string(),
+  displayName: z.string(),
+  baseUrl: z.string().nullable(),
+  description: z.string(),
+  learnedAt: z.string().nullable(),
+  ops: z.array(specOpSummarySchema),
+});
+
+export const siteListInputSchema = z.object({
+  site: siteNameSchema.optional().describe('Read this one spec; omit to list every learned spec'),
+});
+
+export const siteOpInputSchema = z.object({
+  site: siteNameSchema,
+  op: z.string().min(1).max(128).describe('Op name from site_list'),
+  params: siteParamsSchema.optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(500)
+    .optional()
+    .describe('Rows returned in data (default 25); the total count is always reported in rows'),
+});
+
+export const siteCheckInputSchema = z.object({
+  site: siteNameSchema,
+  op: z.string().min(1).max(128),
+  params: siteParamsSchema.optional().describe('Overrides the check params of the spec'),
+});
+
+export const siteListOutputShape: z.ZodRawShape = {
+  dir: z.string().describe('Spec directory this server reads (SITE_SPECS_DIR).'),
+  specs: z.array(specSummarySchema),
+};
+
+export const siteOpOutputShape: z.ZodRawShape = {
+  site: z.string(),
+  op: z.string(),
+  transport: z.enum(['http', 'browser-mcp']),
+  ok: z.boolean(),
+  status: z.number().int().nullable(),
+  ms: z.number().int(),
+  rows: z.number().int(),
+  truncated: z
+    .boolean()
+    .describe('True when `rows` exceeds the returned data (raise limit for the rest).'),
+  opError: z
+    .string()
+    .nullable()
+    .describe('Why the op itself failed (site changed, HTTP error); null when ok.'),
+  data: z.unknown().optional(),
+};
+
+export const siteCheckOutputShape: z.ZodRawShape = {
+  site: z.string(),
+  op: z.string(),
+  ok: z.boolean().describe('True only when the op ran and every expected field is present in every row.'),
+  rows: z.number().int(),
+  missing: z.array(z.string()).describe('Empty expected fields as "rowIndex:field" (validated on EVERY row).'),
+  expect: z.array(z.string()),
+  status: z.number().int().nullable(),
+  ms: z.number().int(),
+  opError: z.string().nullable(),
+  data: z.unknown().optional(),
 };
 
 export type LocatorInput = z.infer<typeof locatorSchema>;

@@ -45,6 +45,7 @@ import {
 } from '../policy/confirm.js';
 import type { HumanGate } from '../human/gate.js';
 import { challengeProviderLabel, describeChallenge, detectChallenge } from '../human/challenge.js';
+import { runSpecCheck, runSpecOp, SpecError, type SpecStore } from '../spec/index.js';
 import {
   browserConnectOutputShape,
   browserStatusOutputShape,
@@ -74,6 +75,12 @@ import {
   pageSnapshotOutputShape,
   pageWaitInputSchema,
   pageWaitOutputShape,
+  siteCheckInputSchema,
+  siteCheckOutputShape,
+  siteListInputSchema,
+  siteListOutputShape,
+  siteOpInputSchema,
+  siteOpOutputShape,
   toolOutputSchema,
   type LocatorInput,
 } from './schemas.js';
@@ -96,12 +103,16 @@ const RETRYABLE_CODES = new Set<string>([
  */
 const CHALLENGE_SCAN_TIMEOUT_MS = 5_000;
 const DESCRIBE_TIMEOUT_MS = 5_000;
+/** Rows returned by site_op unless it is asked for more (total stays in `rows`). */
+const DEFAULT_SITE_ROWS = 25;
 
 export interface BrowserToolDeps {
   readonly adapter: BrowserAdapter;
   readonly domainPolicy: DomainPolicy;
   readonly humanGate: HumanGate;
   readonly confirmationGate?: ConfirmationGate;
+  /** Learned site specs for site_list / site_op / site_check. */
+  readonly specStore: SpecStore;
   readonly logger: Logger;
 }
 
@@ -138,6 +149,11 @@ function classifyError(error: unknown): ToolFailure {
     return { code: error.code, message: sanitizeMessage(error.message) };
   }
   if (error instanceof DomainPolicyError) {
+    return { code: error.code, message: sanitizeMessage(error.message) };
+  }
+  // Spec problems keep their typed codes (spec_not_found, spec_unknown_op,
+  // specs_dir_missing, spec_invalid): they tell the model exactly what to fix.
+  if (error instanceof SpecError) {
     return { code: error.code, message: sanitizeMessage(error.message) };
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -190,7 +206,7 @@ function pageInfoStructured(info: PageInfo): Record<string, unknown> {
  * annotations are stable Stage 5 API; Stage 6 adds the human-control flows.
  */
 export function registerBrowserTools(server: McpServer, deps: BrowserToolDeps): void {
-  const { adapter, domainPolicy, humanGate } = deps;
+  const { adapter, domainPolicy, humanGate, specStore } = deps;
   const confirmationGate = deps.confirmationGate ?? createConfirmationGate();
   const logger = deps.logger.child({ component: 'mcp-tools' });
 
@@ -1068,6 +1084,181 @@ export function registerBrowserTools(server: McpServer, deps: BrowserToolDeps): 
       });
     },
   );
+
+  // -------------------------------------------------------------------------
+  // Learned site specs — the graber-web capability, now part of the server
+  // -------------------------------------------------------------------------
+
+  server.registerTool(
+    'site_list',
+    {
+      title: 'List learned site specs',
+      description:
+        'List the site specs learned on this machine (the SITE_SPECS_DIR directory): each spec with its ops, their parameters and whether the op carries a `check` contract. Call this first to see what can be replayed instead of exploring a site again. Read-only; it never returns a spec beyond names, parameters and descriptions, and spec files stay local — never publish their contents.',
+      inputSchema: siteListInputSchema,
+      outputSchema: toolOutputSchema(siteListOutputShape),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const blocked = blockedWhilePaused();
+      if (blocked) return blocked;
+      return asOperation(async () => {
+        try {
+          const specs = await specStore.list();
+          if (args.site !== undefined && !specs.some((spec) => spec.name === args.site)) {
+            throw new SpecError(
+              'spec_not_found',
+              `no spec "${args.site}" in ${specStore.dir}; call site_list without arguments for the available names`,
+            );
+          }
+          const selected = args.site === undefined ? specs : specs.filter((spec) => spec.name === args.site);
+          const opCount = selected.reduce((total, spec) => total + spec.ops.length, 0);
+          const broken = selected.filter((spec) => spec.description.startsWith('INVALID:'));
+          const text =
+            `${selected.length} spec(s), ${opCount} op(s) in ${specStore.dir}.` +
+            (broken.length > 0
+              ? ` ${broken.length} invalid file(s): ${broken.map((spec) => spec.displayName).join(', ')}.`
+              : '');
+          return okResult(text, { dir: specStore.dir, specs: selected });
+        } catch (error) {
+          return fail('site_list', error);
+        }
+      });
+    },
+  );
+
+  server.registerTool(
+    'site_op',
+    {
+      title: 'Run a learned site op',
+      description:
+        'Replay one op of a learned spec and return its structured rows: either over plain HTTP, or — for ops with transport "browser-mcp" (login/Cloudflare-walled sites) — through this same visible Chrome, reusing only the tab the op is allowed to reuse. `ok:false` (an error result with code site_no_data) means the site no longer matches the spec: re-learn that op instead of guessing field names. An empty price/availability field is a real answer (null), never 0. `rows` is the total, `data` is capped by `limit` (check `truncated`). Blocked while human control is paused.',
+      inputSchema: siteOpInputSchema,
+      outputSchema: toolOutputSchema(siteOpOutputShape),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      const blocked = blockedWhilePaused();
+      if (blocked) return blocked;
+      return asOperation(async () => {
+        try {
+          const { spec, op } = await specStore.op(args.site, args.op);
+          const transport = op.transport ?? 'http';
+          const limit = args.limit ?? DEFAULT_SITE_ROWS;
+          const result = await runSpecOp(spec, args.op, args.params ?? {}, {
+            adapter,
+            domainPolicy,
+            logger,
+          });
+          const rows = Array.isArray(result.data) ? result.data.length : result.data === null ? 0 : 1;
+          const truncated = Array.isArray(result.data) && result.data.length > limit;
+          const data = Array.isArray(result.data) ? result.data.slice(0, limit) : result.data;
+          const structured = {
+            site: args.site,
+            op: args.op,
+            transport,
+            ok: result.ok,
+            status: result.status,
+            ms: result.ms,
+            rows,
+            truncated,
+            opError: result.error,
+            ...(data !== null && data !== undefined ? { data } : {}),
+          };
+          if (!result.ok) {
+            const message = result.error ?? 'the op returned no usable data';
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `site_no_data: ${args.site}/${args.op} (${transport}) failed: ${message}`,
+                },
+              ],
+              isError: true,
+              structuredContent: {
+                ...structured,
+                // Both views: `error` for clients that surface codes, `opError`
+                // for the field-level detail (never a silent empty result).
+                error: { code: 'site_no_data', message, retryable: false },
+              },
+            };
+          }
+          return okResult(
+            `site_op ${args.site}/${args.op} ok via ${transport}: ${rows} row(s) in ${result.ms} ms${
+              truncated ? ` (data capped at ${limit}; raise limit for the rest)` : ''
+            }.`,
+            structured,
+          );
+        } catch (error) {
+          return fail('site_op', error);
+        }
+      });
+    },
+  );
+
+  server.registerTool(
+    'site_check',
+    {
+      title: 'Verify a learned site op',
+      description:
+        'Run an op with its holdout check params and validate EVERY extracted row against the fields the spec expects, reporting failures as "rowIndex:field". This is the contract to run before trusting data from a spec: ok=false with a non-empty `missing` list means the site changed or the spec is stale — re-learn the op (see the graber-web skill) rather than guessing. Not an error result: a failing check is an answer.',
+      inputSchema: siteCheckInputSchema,
+      outputSchema: toolOutputSchema(siteCheckOutputShape),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      const blocked = blockedWhilePaused();
+      if (blocked) return blocked;
+      return asOperation(async () => {
+        try {
+          const { spec, op } = await specStore.op(args.site, args.op);
+          const outcome = await runSpecCheck(spec, args.op, args.params ?? {}, {
+            adapter,
+            domainPolicy,
+            logger,
+          });
+          const expect = op.check?.expect ?? [];
+          const structured = {
+            site: args.site,
+            op: args.op,
+            ok: outcome.ok,
+            rows: outcome.check.rows,
+            missing: outcome.check.missing,
+            expect,
+            status: outcome.result.status,
+            ms: outcome.result.ms,
+            opError: outcome.result.error,
+            ...(outcome.result.data !== null && outcome.result.data !== undefined
+              ? { data: outcome.result.data }
+              : {}),
+          };
+          const text = outcome.ok
+            ? `site_check ${args.site}/${args.op} ok: ${outcome.check.rows} row(s), every expected field (${expect.join(', ') || 'none'}) present.`
+            : `site_check ${args.site}/${args.op} FAILED: ${outcome.check.missing.join(', ') || 'no rows'}${
+                outcome.result.error !== null ? ` (op error: ${outcome.result.error})` : ''
+              } — re-learn this op before trusting its data.`;
+          return okResult(text, structured);
+        } catch (error) {
+          return fail('site_check', error);
+        }
+      });
+    },
+  );
 }
 
 /**
@@ -1092,4 +1283,7 @@ export const browserToolOutputSchemas = {
   page_extract: toolOutputSchema(pageExtractOutputShape),
   human_required: toolOutputSchema(humanRequiredOutputShape),
   human_resume: toolOutputSchema(humanResumeOutputShape),
+  site_list: toolOutputSchema(siteListOutputShape),
+  site_op: toolOutputSchema(siteOpOutputShape),
+  site_check: toolOutputSchema(siteCheckOutputShape),
 } as const;

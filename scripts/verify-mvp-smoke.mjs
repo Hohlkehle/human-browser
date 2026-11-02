@@ -5,7 +5,7 @@
  *   1. the server connects to the configured private CDP endpoint
  *      (a disposable Chrome started for this script);
  *   2. an MCP client (the same exchange ChatGPT/Inspector performs) sees all
- *      16 tools over Streamable HTTP;
+ *      19 tools over Streamable HTTP;
  *   3. a site can be opened, clicked and text-extracted through the tools;
  *   7. the MCP endpoint listens on loopback only.
  *

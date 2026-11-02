@@ -64,6 +64,12 @@ export const configSchema = z.object({
   }),
   operationTimeoutMs: positiveMilliseconds,
   humanTimeoutMs: positiveMilliseconds,
+  /**
+   * Directory holding the learned site specs read by `site_list`/`site_op`/
+   * `site_check`. Deliberately outside version control: the files describe a
+   * site's internal data format, which must never be published.
+   */
+  siteSpecsDir: z.string().min(1),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
@@ -102,6 +108,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     },
     operationTimeoutMs: environment.MCP_OPERATION_TIMEOUT_MS ?? '30000',
     humanTimeoutMs: environment.HUMAN_TIMEOUT_MS ?? '300000',
+    siteSpecsDir: environment.SITE_SPECS_DIR ?? 'specs',
   };
 
   return configSchema.parse(raw);

@@ -167,7 +167,7 @@ describeWithChrome('MCP server over Streamable HTTP (real Chrome)', () => {
     return (await client.callTool({ name, arguments: args })) as CallToolResult;
   }
 
-  it('lists all 16 tools through the HTTP transport', async () => {
+  it('lists all 19 tools through the HTTP transport', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       'browser_connect',
@@ -186,6 +186,9 @@ describeWithChrome('MCP server over Streamable HTTP (real Chrome)', () => {
       'page_select',
       'page_snapshot',
       'page_wait',
+      'site_check',
+      'site_list',
+      'site_op',
     ]);
   });
 

@@ -69,16 +69,23 @@ snapshots, extraction results, and logs. It is consumed by the Stage 5 MCP serve
 ## MCP server (Stage 5)
 
 `src/mcp/` exposes the browser adapter as an MCP server named `browser-mcp`
-with 16 tools: `browser_connect`, `browser_status`, `page_list`, `page_open`,
+with 19 tools: `browser_connect`, `browser_status`, `page_list`, `page_open`,
 `page_navigate`, `page_close`, `page_snapshot`, `page_screenshot`, `page_click`,
 `page_fill`, `page_select`, `page_press`, `page_wait`, `page_extract`,
-`human_required`, and `human_resume`.
+`human_required`, `human_resume`, `site_list`, `site_op`, and `site_check`.
 
 - Tabs: `page_list` reports `openedByAdapter` per tab. `page_close` closes a tab
   the automation opened itself; closing a tab the user opened returns
   `confirmation_required` with a single-use `confirmToken` (repeat the identical
   call with the token only after the user approved). The last open tab is never
   closed (`last_tab_forbidden`) because Chrome exits with it.
+
+- Learned site specs: `site_list` / `site_op` / `site_check` replay a site's
+  data format that was learned once, so a known site costs one tool call instead
+  of another round of clicking. The specs are read from `SITE_SPECS_DIR`
+  (default `<cwd>/specs`), they are **never** committed or shared, and `http`
+  ops do not touch the browser at all. `site_check` validates every row against
+  the expected fields before the data is trusted. See `docs/site-specs.md`.
 
 - Transport: `MCP_TRANSPORT=streamable-http` (default) serves
   `http://127.0.0.1:9230/mcp`; `MCP_TRANSPORT=stdio` speaks MCP over
@@ -143,7 +150,9 @@ npm run tunnel:run      # start the outbound tunnel (Ctrl+C stops)
 - Windows setup, ChatGPT connector / developer-mode wiring, and hop-by-hop
   diagnostics: [`docs/tunnel-client.md`](docs/tunnel-client.md). Local clients
   without a tunnel (Codex CLI STDIO, ChatGPT desktop developer mode, MCP
-  Inspector): [`docs/local-clients.md`](docs/local-clients.md).
+  Inspector): [`docs/local-clients.md`](docs/local-clients.md). Learned site
+  specs (`site_list` / `site_op` / `site_check`, `SITE_SPECS_DIR`):
+  [`docs/site-specs.md`](docs/site-specs.md).
 
 ## Windows service deployment (Stage 8)
 
@@ -201,7 +210,7 @@ tab/session → extract ONLY the requested part numbers and applicability.
 The MVP release criteria (`promts/10-mvp.md`) are all verified:
 
 - the server connects to the configured private CDP endpoint;
-- ChatGPT sees the MCP tools (16 tools via `tools/list`);
+- ChatGPT sees the MCP tools (19 tools via `tools/list`);
 - a site can be opened, clicked, and its text extracted;
 - CAPTCHA and login are always handed to the user (never automated);
 - an existing authenticated session is preserved across server restarts;

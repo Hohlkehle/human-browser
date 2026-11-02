@@ -198,7 +198,7 @@ describe('createMcpHttpServer', () => {
     try {
       expect(client.getInstructions()).toContain('Security rules');
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(16);
+      expect(tools).toHaveLength(19);
 
       const result = (await client.callTool({
         name: 'browser_status',

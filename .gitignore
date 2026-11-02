@@ -7,3 +7,9 @@ coverage/
 
 .codegraph/
 *.pid
+
+# Learned site specs: they describe a site's internal data format, endpoints and
+# quirks, so they stay on this machine — never committed, never published.
+# Point SITE_SPECS_DIR elsewhere to keep them outside the repository entirely.
+specs/
+!examples/site-specs/

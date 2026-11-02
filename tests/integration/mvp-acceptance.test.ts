@@ -12,7 +12,7 @@
  *  2. "Raw cookies and passwords are not accessible to the model": the raw
  *     session-cookie value and a password field value appear in NO tool
  *     output (snapshot/extract/status), and the MCP surface is exactly the
- *     closed set of 15 tools — no cookie/storage/eval capability exists.
+ *     closed set of 19 tools — no cookie/storage/eval capability exists.
  */
 import http, { type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -53,6 +53,9 @@ const EXPECTED_TOOLS = [
   'page_extract',
   'human_required',
   'human_resume',
+  'site_list',
+  'site_op',
+  'site_check',
 ] as const;
 
 const LOGIN_HTML = `<!doctype html>

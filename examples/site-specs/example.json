@@ -1,0 +1,167 @@
+{
+  "name": "example-shop",
+  "displayName": "Example Shop (SYNTHETIC — format reference, not a real site)",
+  "baseUrl": "https://example-shop.test",
+  "description": "A made-up site that exists only to demonstrate the spec format end to end. It is deliberately NOT a learned spec: the real ones live in SITE_SPECS_DIR (gitignored) because they record a site's internals.",
+  "learned_at": "2026-11-03T00:00:00Z",
+  "learned_by": "example (docs/site-specs.md)",
+  "ops": {
+    "search": {
+      "description": "Search result cards: title, price and availability. List mode over one text blob per card; a missing price stays null (never 0).",
+      "transport": "http",
+      "url": "https://example-shop.test/search?q={query}",
+      "headers": {
+        "accept-language": "en-US,en;q=0.9"
+      },
+      "timeout": 30,
+      "retries": 1,
+      "retry_wait": 5,
+      "params": [
+        {
+          "name": "query",
+          "example": "widget",
+          "hint": "free text; the site normalizes case and spacing itself"
+        }
+      ],
+      "response": {
+        "format": "html",
+        "item_pattern": "<article class=\"card\" data-id=\"(?P<id>\\d+)\">(?s:.*?)</article>",
+        "pick": [
+          {
+            "name": "title",
+            "pattern": "<h3[^>]*>(?:<span|<a)[^>]*>([^<]+)</(?:span|a)></h3>"
+          },
+          {
+            "name": "price",
+            "pattern": "(?:itemprop=\"price\" content=\"|\\\"amount\\\":)([\\d.]+)"
+          },
+          {
+            "name": "availability",
+            "pattern": "(In stock|Out of stock|Limited quantity)"
+          },
+          {
+            "name": "photos",
+            "pattern": "https://example-shop\\.test/photos/[a-f0-9-]+",
+            "all": true,
+            "dedupe": true
+          }
+        ]
+      },
+      "check": {
+        "params": {
+          "query": "gadget"
+        },
+        "expect": [
+          "title",
+          "price",
+          "availability"
+        ]
+      }
+    },
+    "getCard": {
+      "description": "Single product card: title, brand and the manufacturer reference (recovers the fields the search card collapses).",
+      "transport": "http",
+      "url": "https://example-shop.test/card/{cardId}",
+      "slice_before": "id=\"similar-ads\"",
+      "params": [
+        {
+          "name": "cardId",
+          "example": "123456",
+          "hint": "numeric id from the search op's `id` field"
+        }
+      ],
+      "response": {
+        "format": "html",
+        "pick": [
+          {
+            "name": "title",
+            "pattern": "<h1[^>]*>([^<]+)</h1>"
+          },
+          {
+            "name": "brand",
+            "pattern": "Brand:\\s*([^<\\n]+)"
+          },
+          {
+            "name": "reference",
+            "pattern": "Manufacturer number:\\s*([A-Z0-9./-]+)"
+          }
+        ]
+      },
+      "check": {
+        "params": {
+          "cardId": "654321"
+        },
+        "expect": [
+          "title"
+        ]
+      }
+    },
+    "apiSearch": {
+      "description": "The same search through the site's own JSON endpoint: same rows, no HTML forensics.",
+      "transport": "http",
+      "url": "https://example-shop.test/api/search?q={query}",
+      "response": {
+        "format": "json",
+        "extract": "data.items",
+        "pick": [
+          "id",
+          {
+            "name": "title",
+            "path": "ad.title"
+          },
+          {
+            "name": "price",
+            "path": "price.amount"
+          }
+        ],
+        "multi": true
+      }
+    },
+    "signedInSearch": {
+      "description": "A login/Cloudflare-walled variant: the same picks, but driven through the visible Chrome that is already signed in. Reuses only the workflow's own tab; never navigates the user's tabs.",
+      "transport": "browser-mcp",
+      "url": "https://example-shop.test/search?q={query}",
+      "tab_match": "/search",
+      "wait_selector": ".card",
+      "item_selector": ".card",
+      "text_selector": "body",
+      "settle": 1.2,
+      "wait_timeout_ms": 15000,
+      "params": [
+        {
+          "name": "query",
+          "example": "widget",
+          "hint": "the site's own query string is preferred over hand-built URLs"
+        }
+      ],
+      "response": {
+        "format": "browser-text",
+        "item_pattern": "one blob per .card",
+        "slice_before": "Similar products",
+        "pick": [
+          {
+            "name": "title",
+            "pattern": "^(.+?)\\s+Brand:"
+          },
+          {
+            "name": "price",
+            "pattern": "(\\d[\\d\\s\\u00a0]*,\\d{2})\\s*€"
+          },
+          {
+            "name": "availability",
+            "pattern": "(In stock|Limited quantity|Temporarily unavailable)"
+          }
+        ]
+      },
+      "check": {
+        "params": {
+          "query": "widget"
+        },
+        "expect": [
+          "title",
+          "availability"
+        ]
+      }
+    }
+  }
+}

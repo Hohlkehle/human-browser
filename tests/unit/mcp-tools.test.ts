@@ -46,6 +46,9 @@ const EXPECTED_TOOLS = [
   'page_extract',
   'human_required',
   'human_resume',
+  'site_list',
+  'site_op',
+  'site_check',
 ] as const;
 
 const FAKE_PAGE: PageInfo = {
@@ -195,7 +198,7 @@ async function expectValidationFailure(call: Promise<unknown>): Promise<void> {
 }
 
 describe('tool discovery', () => {
-  it('lists all 16 tools', async () => {
+  it('lists all 19 tools', async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([...EXPECTED_TOOLS].sort());

@@ -883,3 +883,43 @@ cleanup primitive at all. Added as the 16th tool.
   drives real Chrome (close, `remainingTabs`, last-tab refusal leaves the tab
   alive, unknown id); `tests/integration/mcp-http.test.ts` runs the whole
   exchange over Streamable HTTP with a real Chrome.
+
+## Post-MVP: learned site specs inside the server (graber-web merge) — 2026-11-03
+
+The standalone `graber-web` skill (Python, `scripts/site_op.py`) learned a
+site's data format once and replayed it over HTTP. That capability now lives
+inside this server, so a known site costs ONE tool call instead of a fresh
+round of exploring — the browser engine and the spec engine are the same
+program, sharing the adapter, the domain policy and the human gate.
+
+- `src/spec/` is a faithful port of the Python engine: `types`, `regex`
+  (translation + a hard failure on untranslatable constructs), `pick` (JSON /
+  embedded-JSON / HTML / browser-text extraction), `store`, `http`, `run`.
+  The same spec files work with both implementations.
+- Tools: `site_list` (what is learned: ops, params, transport, `check`),
+  `site_op` (run one op; `rows` = total, `data` capped by `limit`, `truncated`
+  says so, `ok:false` → error `site_no_data` with the reason), `site_check`
+  (validates EVERY row against the expected fields, reporting `rowIndex:field`;
+  a failing check is an answer, not a tool error). All three are read-only and
+  are refused while human control is paused.
+- Transports: `http` (plain fetch, no browser at all) and `browser-mcp` (the
+  user's authenticated visible Chrome, called directly through the adapter — no
+  JSON-RPC round trip to ourselves). A browser op reuses only the tab whose URL
+  matches its `tab_match`, otherwise it opens a new one; the user's tabs are
+  never navigated. Extraction is visible text only.
+- An auth wall is reported, not hidden: when the site redirects a browser op to
+  a sign-in URL, the op fails with the landing URL and the host to sign in to,
+  instead of returning "0 rows" as if the site were fine (found in the wild on
+  the first live run — the debug Chrome had no session).
+- Privacy: specs describe a site's internals, so they are read from
+  `SITE_SPECS_DIR` (default `<cwd>/specs`) and `specs/` is gitignored; the
+  repository carries only the engine, `docs/site-specs.md` and a synthetic
+  `examples/site-specs/example.json`. The spec's own allowlist check still runs,
+  so a spec is never a way around `BROWSER_ALLOWED_DOMAINS`.
+- Verification: `tests/unit/spec-pick.test.ts` (26 ported offline assertions,
+  cross-checked against the Python output), `tests/unit/spec-run.test.ts`
+  (HTTP transport on a local fixture server, check contract, error mapping,
+  browser transport on a fake adapter) and `tests/unit/mcp-site-tools.test.ts`
+  (through a real MCP client/server pair). Live: `site_check kleinanzeigen/search`
+  → 25 rows, every field present; `site_op kleinanzeigen/search` → 26 rows,
+  capped at the requested limit; `tools/list` = 19.
