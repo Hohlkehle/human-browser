@@ -35,6 +35,7 @@ const EXPECTED_TOOLS = [
   'page_list',
   'page_open',
   'page_navigate',
+  'page_close',
   'page_snapshot',
   'page_screenshot',
   'page_click',
@@ -95,6 +96,12 @@ function createFakeAdapter(overrides: Partial<BrowserAdapter> = {}): BrowserAdap
     status: vi.fn(() => fakeStatus()),
     listPages: vi.fn(async () => [FAKE_PAGE]),
     openPage: vi.fn(async () => FAKE_PAGE),
+    closePage: vi.fn(async (params) => ({
+      pageId: params.pageId,
+      closed: true as const,
+      remainingTabs: 2,
+      url: FAKE_PAGE.url,
+    })),
     navigate: vi.fn(async (params) => ({ ...FAKE_PAGE, url: params.url })),
     snapshot: vi.fn(async () => '- heading "Hello"'),
     screenshot: vi.fn(async () => Buffer.from([0x89, 0x50, 0x4e, 0x47])),
@@ -188,7 +195,7 @@ async function expectValidationFailure(call: Promise<unknown>): Promise<void> {
 }
 
 describe('tool discovery', () => {
-  it('lists all 15 tools', async () => {
+  it('lists all 16 tools', async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([...EXPECTED_TOOLS].sort());
@@ -467,8 +474,23 @@ describe('tool behaviour', () => {
     const { client } = await setup();
     const result = (await client.callTool({ name: 'page_list', arguments: {} })) as CallToolResult;
     expect(structured(result).pages).toEqual([
-      { pageId: 'page-1', contextId: 'ctx-1', url: FAKE_PAGE.url, title: FAKE_PAGE.title },
+      {
+        pageId: 'page-1',
+        contextId: 'ctx-1',
+        url: FAKE_PAGE.url,
+        title: FAKE_PAGE.title,
+        openedByAdapter: false,
+      },
     ]);
+  });
+
+  it('page_list flags the tabs the automation opened itself', async () => {
+    const adapter = createFakeAdapter({
+      listPages: vi.fn(async () => [{ ...FAKE_PAGE, openedByAdapter: true }]),
+    });
+    const { client } = await setup({ adapter });
+    const result = (await client.callTool({ name: 'page_list', arguments: {} })) as CallToolResult;
+    expect(structured(result).pages).toMatchObject([{ pageId: 'page-1', openedByAdapter: true }]);
   });
 });
 
@@ -941,5 +963,157 @@ describe('sensitive-action confirmation (Stage 6)', () => {
     })) as CallToolResult;
     expect(result.isError).toBeFalsy();
     expect(adapter.click).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('page_close', () => {
+  const OWNED_PAGE: PageInfo = { ...FAKE_PAGE, openedByAdapter: true };
+  const USER_PAGE: PageInfo = {
+    pageId: 'page-2',
+    contextId: 'ctx-1',
+    url: 'https://allowed.test/profile/orders',
+    title: 'Account',
+    openedByAdapter: false,
+  };
+
+  it('closes a tab the automation opened without any confirmation', async () => {
+    const adapter = createFakeAdapter({ listPages: vi.fn(async () => [OWNED_PAGE, USER_PAGE]) });
+    const { client } = await setup({ adapter });
+
+    const result = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-1' },
+    })) as CallToolResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(structured(result)).toMatchObject({
+      pageId: 'page-1',
+      closed: true,
+      remainingTabs: 2,
+      url: FAKE_PAGE.url,
+    });
+    expect(adapter.closePage).toHaveBeenCalledTimes(1);
+    expect(adapter.closePage).toHaveBeenCalledWith(
+      expect.objectContaining({ pageId: 'page-1' }),
+    );
+  });
+
+  it('refuses to close a tab the USER opened until the token is presented', async () => {
+    const adapter = createFakeAdapter({ listPages: vi.fn(async () => [USER_PAGE]) });
+    const { client } = await setup({ adapter });
+
+    const refused = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-2' },
+    })) as CallToolResult;
+
+    const error = errorOf(refused);
+    expect(error.code).toBe('confirmation_required');
+    expect(error.retryable).toBe(true);
+    expect(error.pageId).toBe('page-2');
+    expect(error.message).toContain('allowed.test');
+    const token = structured(refused).confirmToken as string;
+    expect(token).toMatch(/^[0-9a-f]{32}$/);
+    expect(structured(refused).sensitiveAction).toBe('tab_close');
+    // Nothing was closed on the refusal path.
+    expect(adapter.closePage).not.toHaveBeenCalled();
+
+    // The user approved: the identical call with the token closes the tab.
+    const confirmed = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-2', confirmToken: token },
+    })) as CallToolResult;
+    expect(confirmed.isError).toBeFalsy();
+    expect(structured(confirmed).closed).toBe(true);
+    expect(adapter.closePage).toHaveBeenCalledTimes(1);
+
+    // Single-use: replaying the token asks again.
+    const replayed = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-2', confirmToken: token },
+    })) as CallToolResult;
+    expect(errorOf(replayed).code).toBe('confirmation_required');
+    expect(adapter.closePage).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a token issued for another tab', async () => {
+    const adapter = createFakeAdapter({ listPages: vi.fn(async () => [OWNED_PAGE, USER_PAGE]) });
+    const { client } = await setup({ adapter });
+    const refused = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-2' },
+    })) as CallToolResult;
+    const token = structured(refused).confirmToken as string;
+
+    const wrongTab = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-3', confirmToken: token },
+    })) as CallToolResult;
+    expect(errorOf(wrongTab).code).toBe('unknown_page');
+    expect(adapter.closePage).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown pageId without touching the adapter', async () => {
+    const adapter = createFakeAdapter({ listPages: vi.fn(async () => [OWNED_PAGE]) });
+    const { client } = await setup({ adapter });
+
+    const result = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-99' },
+    })) as CallToolResult;
+    const error = errorOf(result);
+    expect(error.code).toBe('unknown_page');
+    expect(error.retryable).toBe(false);
+    expect(adapter.closePage).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the last-tab refusal from the adapter', async () => {
+    const adapter = createFakeAdapter({
+      listPages: vi.fn(async () => [OWNED_PAGE]),
+      closePage: vi.fn(async () => {
+        throw new BrowserAdapterError(
+          'last_tab_forbidden',
+          'Refusing to close the only open tab: Chrome exits when its last tab closes',
+        );
+      }),
+    });
+    const { client } = await setup({ adapter });
+
+    const result = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-1' },
+    })) as CallToolResult;
+    const error = errorOf(result);
+    expect(error.code).toBe('last_tab_forbidden');
+    expect(error.retryable).toBe(false);
+  });
+
+  it('is blocked while human control is paused', async () => {
+    const { client, humanGate } = await setup();
+    humanGate.pause({ reason: 'login', pageId: 'page-1', kind: 'manual' });
+
+    const result = (await client.callTool({
+      name: 'page_close',
+      arguments: { pageId: 'page-1' },
+    })) as CallToolResult;
+    expect(errorOf(result).code).toBe('human_required');
+  });
+
+  it('validates arguments and is advertised as destructive', async () => {
+    const adapter = createFakeAdapter();
+    const { client } = await setup({ adapter });
+
+    await expectValidationFailure(client.callTool({ name: 'page_close', arguments: {} }));
+    expect(adapter.closePage).not.toHaveBeenCalled();
+
+    const { tools } = await client.listTools();
+    const close = tools.find((tool) => tool.name === 'page_close');
+    expect(close).toBeTruthy();
+    expect(close!.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    });
+    expect(JSON.stringify(close!.inputSchema)).toContain('confirmToken');
   });
 });

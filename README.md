@@ -69,10 +69,16 @@ snapshots, extraction results, and logs. It is consumed by the Stage 5 MCP serve
 ## MCP server (Stage 5)
 
 `src/mcp/` exposes the browser adapter as an MCP server named `browser-mcp`
-with 15 tools: `browser_connect`, `browser_status`, `page_list`, `page_open`,
-`page_navigate`, `page_snapshot`, `page_screenshot`, `page_click`,
+with 16 tools: `browser_connect`, `browser_status`, `page_list`, `page_open`,
+`page_navigate`, `page_close`, `page_snapshot`, `page_screenshot`, `page_click`,
 `page_fill`, `page_select`, `page_press`, `page_wait`, `page_extract`,
 `human_required`, and `human_resume`.
+
+- Tabs: `page_list` reports `openedByAdapter` per tab. `page_close` closes a tab
+  the automation opened itself; closing a tab the user opened returns
+  `confirmation_required` with a single-use `confirmToken` (repeat the identical
+  call with the token only after the user approved). The last open tab is never
+  closed (`last_tab_forbidden`) because Chrome exits with it.
 
 - Transport: `MCP_TRANSPORT=streamable-http` (default) serves
   `http://127.0.0.1:9230/mcp`; `MCP_TRANSPORT=stdio` speaks MCP over
@@ -195,7 +201,7 @@ tab/session → extract ONLY the requested part numbers and applicability.
 The MVP release criteria (`promts/10-mvp.md`) are all verified:
 
 - the server connects to the configured private CDP endpoint;
-- ChatGPT sees the MCP tools (15 tools via `tools/list`);
+- ChatGPT sees the MCP tools (16 tools via `tools/list`);
 - a site can be opened, clicked, and its text extracted;
 - CAPTCHA and login are always handed to the user (never automated);
 - an existing authenticated session is preserved across server restarts;

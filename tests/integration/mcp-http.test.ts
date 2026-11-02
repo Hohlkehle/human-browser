@@ -167,7 +167,7 @@ describeWithChrome('MCP server over Streamable HTTP (real Chrome)', () => {
     return (await client.callTool({ name, arguments: args })) as CallToolResult;
   }
 
-  it('lists all 15 tools through the HTTP transport', async () => {
+  it('lists all 16 tools through the HTTP transport', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       'browser_connect',
@@ -175,6 +175,7 @@ describeWithChrome('MCP server over Streamable HTTP (real Chrome)', () => {
       'human_required',
       'human_resume',
       'page_click',
+      'page_close',
       'page_extract',
       'page_fill',
       'page_list',
@@ -226,6 +227,43 @@ describeWithChrome('MCP server over Streamable HTTP (real Chrome)', () => {
     expect(result.isError).toBe(true);
     expect((structured(result).error as { code: string }).code).toBe('domain_forbidden');
   });
+
+  it('closes an automation-opened tab and refuses to close the user’s own', async () => {
+    // A tab this automation opened is closed directly.
+    const opened = await call('page_open', { url: `${fixture.url}/form` });
+    const owned = structured(opened).pageId as string;
+    const listed = await call('page_list');
+    const ownedInfo = (structured(listed).pages as Array<{ pageId: string; openedByAdapter?: boolean }>)
+      .find((page) => page.pageId === owned);
+    expect(ownedInfo?.openedByAdapter).toBe(true);
+
+    const closed = await call('page_close', { pageId: owned });
+    expect(closed.isError).toBeFalsy();
+    expect(structured(closed)).toMatchObject({ pageId: owned, closed: true });
+    expect(structured(closed).remainingTabs).toBeGreaterThan(0);
+
+    // A tab that existed before the automation (the browser's own tab) is NOT
+    // ours: closing it demands a single-use token from the user.
+    const userTab = (structured(await call('page_list')).pages as Array<{
+      pageId: string;
+      openedByAdapter?: boolean;
+    }>).find((page) => page.openedByAdapter === false);
+    expect(userTab).toBeTruthy();
+    // Guard: never close the fixture tab the other tests still use.
+    expect(userTab!.pageId).not.toBe(pageId);
+
+    const refused = await call('page_close', { pageId: userTab!.pageId });
+    expect(refused.isError).toBe(true);
+    expect((structured(refused).error as { code: string }).code).toBe('confirmation_required');
+    expect(structured(refused).sensitiveAction).toBe('tab_close');
+    const token = structured(refused).confirmToken as string;
+    expect(token).toMatch(/^[0-9a-f]{32}$/);
+
+    // The user approved: the tab goes away with the token.
+    const confirmed = await call('page_close', { pageId: userTab!.pageId, confirmToken: token });
+    expect(confirmed.isError).toBeFalsy();
+    expect(structured(confirmed).closed).toBe(true);
+  }, 60_000);
 
   it('refuses to fill a password field', async () => {
     const result = await call('page_fill', {

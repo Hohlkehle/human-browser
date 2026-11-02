@@ -16,7 +16,7 @@
  */
 import { randomBytes } from 'node:crypto';
 
-export type SensitiveActionKind = 'purchase' | 'message' | 'account_change';
+export type SensitiveActionKind = 'purchase' | 'message' | 'account_change' | 'tab_close';
 
 export const MAX_SENSITIVE_DESCRIPTION_CHARS = 150;
 export const DEFAULT_CONFIRMATION_TTL_MS = 300_000;
@@ -144,6 +144,8 @@ export function sensitiveActionLabel(kind: SensitiveActionKind): string {
       return 'sending a message';
     case 'account_change':
       return 'account change';
+    case 'tab_close':
+      return 'closing a tab the user opened';
   }
 }
 

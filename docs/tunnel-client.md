@@ -142,7 +142,7 @@ Work hop by hop; each command must succeed before moving to the next.
 | 1 | Chrome + CDP | `curl.exe http://127.0.0.1:9222/json/version` | JSON with `Protocol-Version`. If dead: Chrome is not running with `--remote-debugging-port=9222`. |
 | 2 | CDP gateway | `curl.exe http://127.0.0.1:9229/healthz` | `{"status":"ok"}`. `curl.exe http://127.0.0.1:9229/json/version` without the bearer token must answer **401**. (Skip when `GATEWAY_ENABLED=false`.) |
 | 3 | Browser MCP | `curl.exe http://127.0.0.1:9230/healthz` and `/readyz` | `{"status":"ok"}` from both. |
-| 3b | Browser MCP (protocol) | MCP Inspector: `npx @modelcontextprotocol/inspector`, connect to `http://127.0.0.1:9230/mcp`, list tools, call `browser_status` | 15 tools; `browser_status` returns `connected` + `humanControl` state. |
+| 3b | Browser MCP (protocol) | MCP Inspector: `npx @modelcontextprotocol/inspector`, connect to `http://127.0.0.1:9230/mcp`, list tools, call `browser_status` | 16 tools; `browser_status` returns `connected` + `humanControl` state. |
 | 4 | tunnel-client | `npm run tunnel:doctor` | All checks `[ ok ]` (quick mode: one `[warn]`). In the `tunnel:run` log: `Registered tunnel connection` (named) or the trycloudflare URL (quick). |
 | 5 | Public hop | `$env:TUNNEL_PUBLIC_URL="https://<host>"; npm run tunnel:doctor` | `public-hop [ ok ]` — healthz + tools/list + browser_status through the tunnel. |
 | 6 | ChatGPT | Re-test the connector (Settings → Apps & Connectors) or ask ChatGPT to call `browser_status` | Tools visible; `browser_status` answers. |

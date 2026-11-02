@@ -43,6 +43,12 @@ function createFakeAdapter(): BrowserAdapter {
       url: 'about:blank',
       title: '',
     })),
+    closePage: vi.fn(async (params) => ({
+      pageId: params.pageId,
+      closed: true as const,
+      remainingTabs: 1,
+      url: 'about:blank',
+    })),
     navigate: vi.fn(async () => ({
       pageId: 'page-1',
       contextId: 'ctx-1',
@@ -192,7 +198,7 @@ describe('createMcpHttpServer', () => {
     try {
       expect(client.getInstructions()).toContain('Security rules');
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(15);
+      expect(tools).toHaveLength(16);
 
       const result = (await client.callTool({
         name: 'browser_status',

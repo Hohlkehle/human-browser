@@ -42,6 +42,7 @@ const EXPECTED_TOOLS = [
   'page_list',
   'page_open',
   'page_navigate',
+  'page_close',
   'page_snapshot',
   'page_screenshot',
   'page_click',

@@ -45,7 +45,7 @@ async function connectStdio(): Promise<Client> {
 }
 
 describe('MCP server over STDIO (real process)', () => {
-  it('initializes, exposes instructions and all 15 tools', async () => {
+  it('initializes, exposes instructions and all 16 tools', async () => {
     const stdio = await connectStdio();
 
     expect(stdio.getServerVersion()?.name).toBe('browser-mcp');
@@ -58,6 +58,7 @@ describe('MCP server over STDIO (real process)', () => {
       'human_required',
       'human_resume',
       'page_click',
+      'page_close',
       'page_extract',
       'page_fill',
       'page_list',

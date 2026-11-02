@@ -87,7 +87,7 @@ the action in Chrome and press Enter. The final report (masked VIN, handoff
 count, part numbers, applicability) is printed as markdown.
 
 An AI client (ChatGPT connector / Codex CLI) can run the same flow manually
-with the 15 tools in the table above; the engine is only a scripted reference
+with the 16 tools in the table above; the engine is only a scripted reference
 client.
 
 ### Tuning the locators

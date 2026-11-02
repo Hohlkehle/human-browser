@@ -71,7 +71,7 @@ describe('runDoctor', () => {
     expect(check(report, 'mcp-readyz').status).toBe('ok');
     const protocol = check(report, 'mcp-protocol');
     expect(protocol.status).toBe('ok');
-    expect(protocol.message).toContain('15 tools');
+    expect(protocol.message).toContain('16 tools');
     expect(protocol.message).toContain('browser_status answered');
     expect(report.ok).toBe(true);
     expect(formatDoctorReport(report)).toContain('Result: OK');

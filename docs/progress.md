@@ -851,3 +851,35 @@
 
 No later stage is specified in `promts/` — Stage 10 (MVP) is the final
 stage currently defined, and it is complete.
+
+## Post-MVP: closing tabs (`page_close`) — 2026-11-03
+
+The MVP tool set could open tabs but never close them: after a scrape the
+automation's own tabs stayed in the user's Chrome window, and the model had no
+cleanup primitive at all. Added as the 16th tool.
+
+- `BrowserAdapter.closePage({ pageId })` closes one tab and reports
+  `remainingTabs` + the closed tab's URL (never its content). The registry now
+  tracks which tabs THIS adapter opened (`adapterOpened`), exposed per tab as
+  `PageInfo.openedByAdapter` in `page_list`/`page_open`/`page_navigate`.
+- Safety: the last open tab is never closed — Chrome exits with its last tab
+  and the user's session (logins, open work) would be gone; the adapter throws
+  `last_tab_forbidden`. `page.close({ runBeforeUnload: false })` is deliberate:
+  a beforeunload dialog could block the call forever (no dialog handler is
+  exposed), which is exactly why a tab the user opened is gated instead.
+- Policy: closing a tab the automation did NOT open is a sensitive action
+  (`sensitiveAction: 'tab_close'`). The first call returns
+  `confirmation_required` with a single-use `confirmToken` bound to that
+  `pageId`; the identical call with the token closes it, and a replayed token
+  asks again. Automation-opened tabs close without any confirmation.
+- Wiring: `pageCloseInputSchema`/`pageCloseOutputShape` (+ `openedByAdapter` in
+  `pageInfoSchema`/`pageOpenOutputShape`), tool registered with
+  `readOnlyHint: false, destructiveHint: true`, and server instruction rule 8
+  documents the three-way contract (own tab / user tab / last tab).
+- Verification: `tests/unit/mcp-tools.test.ts` covers own-tab close, the
+  confirmation round trip with token replay and cross-tab token rejection,
+  `unknown_page`, `last_tab_forbidden`, the `human_required` block and the
+  argument/annotation contract; `tests/integration/browser-adapter.test.ts`
+  drives real Chrome (close, `remainingTabs`, last-tab refusal leaves the tab
+  alive, unknown id); `tests/integration/mcp-http.test.ts` runs the whole
+  exchange over Streamable HTTP with a real Chrome.

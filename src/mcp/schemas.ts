@@ -186,6 +186,19 @@ export const pageNavigateInputSchema = z.object({
   timeoutMs: timeoutMsSchema,
 });
 
+export const pageCloseInputSchema = z.object({
+  pageId: pageIdSchema,
+  confirmToken: z
+    .string()
+    .min(1)
+    .max(128)
+    .optional()
+    .describe(
+      'Single-use confirmation token from a previous confirmation_required error. REQUIRED to close a tab the automation did not open (the user’s own tab), after the user explicitly approved.',
+    ),
+  timeoutMs: timeoutMsSchema,
+});
+
 export const pageSnapshotInputSchema = z.object({
   pageId: pageIdSchema,
   timeoutMs: timeoutMsSchema,
@@ -327,6 +340,10 @@ export const pageInfoSchema = z.object({
   contextId: z.string(),
   url: z.string(),
   title: z.string(),
+  openedByAdapter: z
+    .boolean()
+    .optional()
+    .describe('True when the automation opened this tab itself (safe to close without confirmation).'),
 });
 
 export const humanControlStateSchema = z.enum([
@@ -382,8 +399,29 @@ export const pageOpenOutputShape: z.ZodRawShape = {
   contextId: z.string(),
   url: z.string(),
   title: z.string(),
+  openedByAdapter: z
+    .boolean()
+    .describe('True when the automation opened this tab itself (safe to close without confirmation).'),
 };
 export const pageNavigateOutputShape: z.ZodRawShape = { ...pageOpenOutputShape };
+
+export const pageCloseOutputShape: z.ZodRawShape = {
+  pageId: pageIdSchema,
+  closed: z.literal(true),
+  remainingTabs: z.number().int().describe('Tabs still open after the close.'),
+  url: z.string().describe('URL the closed tab was showing; never its content.'),
+  confirmToken: z
+    .string()
+    .optional()
+    .describe(
+      'Present with a confirmation_required error: single-use token to repeat the close of a user tab after the user approved.',
+    ),
+  sensitiveAction: z.literal('tab_close').optional(),
+  hostname: z
+    .string()
+    .optional()
+    .describe('Hostname of the tab awaiting confirmation; never page content.'),
+};
 
 export const pageSnapshotOutputShape: z.ZodRawShape = {
   pageId: pageIdSchema,

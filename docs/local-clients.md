@@ -51,7 +51,7 @@ npm start          # serves http://127.0.0.1:9230/mcp
 
 Then in the ChatGPT desktop app: **Settings → Developer → Developer mode**
 (on) → in a chat use **+ → Connect to a local/developer MCP server** and enter
-`http://127.0.0.1:9230/mcp`. The app lists the 15 tools; call `browser_status`
+`http://127.0.0.1:9230/mcp`. The app lists the 16 tools; call `browser_status`
 first.
 
 ## 3. Manual smoke test: MCP Inspector
@@ -66,7 +66,7 @@ npx @modelcontextprotocol/inspector
 Open the Inspector UI, set the transport to Streamable HTTP with URL
 `http://127.0.0.1:9230/mcp`, connect, switch to **Tools**, and run
 `browser_status`. Expected: `connected` (false until `browser_connect`),
-`humanControl.state = "ready"`, and the full list of 15 tools.
+`humanControl.state = "ready"`, and the full list of 16 tools.
 
 ## Notes
 

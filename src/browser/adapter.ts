@@ -52,6 +52,7 @@ export type BrowserAdapterErrorCode =
   | 'page_closed'
   | 'unknown_page'
   | 'tab_limit_exceeded'
+  | 'last_tab_forbidden'
   | 'too_many_operations'
   | 'timeout'
   | 'aborted'
@@ -134,6 +135,12 @@ export interface PageInfo {
   readonly contextId: string;
   readonly url: string;
   readonly title: string;
+  /**
+   * True when THIS adapter instance opened the tab via `openPage` (i.e. the
+   * automation's own working tab rather than one of the user's). Closing a tab
+   * the user opened requires an explicit confirmation; see `closePage`.
+   */
+  readonly openedByAdapter?: boolean;
 }
 
 export interface AdapterStatus {
@@ -214,6 +221,19 @@ export interface ScreenshotParams extends OperationOptions {
   readonly fullPage?: boolean;
 }
 
+export interface ClosePageParams extends OperationOptions {
+  readonly pageId: string;
+}
+
+export interface ClosePageResult {
+  readonly pageId: string;
+  readonly closed: true;
+  /** Tabs still open right after the close (across all contexts). */
+  readonly remainingTabs: number;
+  /** URL the closed tab was showing; never its content. */
+  readonly url: string;
+}
+
 /**
  * Server-internal signals for probable-CAPTCHA detection (Stage 6).
  * `visibleText` and `frameUrls` must NEVER leave the server: they are inputs
@@ -246,6 +266,13 @@ export interface BrowserAdapter {
   status(): AdapterStatus;
   listPages(options?: OperationOptions): Promise<PageInfo[]>;
   openPage(params?: OpenPageParams): Promise<PageInfo>;
+  /**
+   * Closes a tab. Refuses to close the LAST open tab (`last_tab_forbidden`):
+   * Chrome exits when its last tab closes, which would destroy the user's
+   * session. Tabs opened by this adapter are closed directly; any other tab
+   * (the user's own) is a destructive action the MCP layer must confirm first.
+   */
+  closePage(params: ClosePageParams): Promise<ClosePageResult>;
   navigate(params: NavigateParams): Promise<PageInfo>;
   /** Redacted ARIA snapshot of the page. */
   snapshot(params: { pageId: string } & OperationOptions): Promise<string>;
@@ -457,12 +484,15 @@ export function createBrowserAdapter(options: BrowserAdapterOptions): BrowserAda
   const idsByPage = new Map<Page, string>();
   const contextsById = new Map<string, BrowserContext>();
   const idsByContext = new Map<BrowserContext, string>();
+  /** Tabs THIS adapter opened (via openPage), as opposed to the user's own. */
+  const adapterOpened = new Set<string>();
 
   function clearRegistry(): void {
     pagesById.clear();
     idsByPage.clear();
     contextsById.clear();
     idsByContext.clear();
+    adapterOpened.clear();
   }
 
   function registerContext(context: BrowserContext): string {
@@ -490,6 +520,7 @@ export function createBrowserAdapter(options: BrowserAdapterOptions): BrowserAda
       page.on('close', () => {
         idsByPage.delete(page);
         pagesById.delete(id as string);
+        adapterOpened.delete(id as string);
       });
     }
     return id;
@@ -558,7 +589,13 @@ export function createBrowserAdapter(options: BrowserAdapterOptions): BrowserAda
     } catch {
       title = '';
     }
-    return { pageId, contextId, url: page.url(), title };
+    return {
+      pageId,
+      contextId,
+      url: page.url(),
+      title,
+      openedByAdapter: adapterOpened.has(pageId),
+    };
   }
 
   function onBrowserDisconnected(): void {
@@ -920,10 +957,40 @@ export function createBrowserAdapter(options: BrowserAdapterOptions): BrowserAda
         pendingOpens -= 1;
       }
       registerPage(page);
+      adapterOpened.add(idsByPage.get(page) as string);
       if (params.url !== undefined) {
         await page.goto(params.url, { timeout: timeoutMs, waitUntil: 'load' });
       }
       return pageInfo(page);
+    });
+  }
+
+  async function closePage(params: ClosePageParams): Promise<ClosePageResult> {
+    return withPage('closePage', params, async (page) => {
+      syncRegistry();
+      // Closing the last tab closes Chrome itself: the user's session (logins,
+      // open work) would be gone. Refuse; the user closes the window by hand.
+      if (pagesById.size <= 1) {
+        throw new BrowserAdapterError(
+          'last_tab_forbidden',
+          'Refusing to close the only open tab: Chrome exits when its last tab closes and the user would lose the session',
+        );
+      }
+      const info = await pageInfo(page);
+      // runBeforeUnload must stay false: a beforeunload dialog would block this
+      // call forever (no dialog handler is exposed), so the tab is closed
+      // outright — which is exactly why the MCP layer confirms first when the
+      // tab is not ours.
+      await page.close({ runBeforeUnload: false });
+      pagesById.delete(info.pageId);
+      adapterOpened.delete(info.pageId);
+      syncRegistry();
+      return {
+        pageId: info.pageId,
+        closed: true,
+        remainingTabs: pagesById.size,
+        url: info.url,
+      };
     });
   }
 
@@ -1198,6 +1265,7 @@ export function createBrowserAdapter(options: BrowserAdapterOptions): BrowserAda
     status,
     listPages,
     openPage,
+    closePage,
     navigate,
     snapshot,
     screenshot,

@@ -53,6 +53,8 @@ import {
   humanResumeOutputShape,
   pageClickInputSchema,
   pageClickOutputShape,
+  pageCloseInputSchema,
+  pageCloseOutputShape,
   pageExtractInputSchema,
   pageExtractOutputShape,
   pageFillInputSchema,
@@ -172,7 +174,15 @@ function locatorToSpec(locator: LocatorInput): LocatorSpec {
 }
 
 function pageInfoStructured(info: PageInfo): Record<string, unknown> {
-  return { pageId: info.pageId, contextId: info.contextId, url: info.url, title: info.title };
+  return {
+    pageId: info.pageId,
+    contextId: info.contextId,
+    url: info.url,
+    title: info.title,
+    // Ownership must survive into page_list/page_open/page_navigate output:
+    // page_close decisions and the model's planning depend on it.
+    openedByAdapter: info.openedByAdapter === true,
+  };
 }
 
 /**
@@ -447,6 +457,103 @@ export function registerBrowserTools(server: McpServer, deps: BrowserToolDeps): 
         const challenge = await challengeGuard(info.pageId);
         if (challenge) return challenge;
         return okResult(`Navigated ${info.pageId} to ${info.url}.`, pageInfoStructured(info));
+      });
+    },
+  );
+
+  server.registerTool(
+    'page_close',
+    {
+      title: 'Close a tab',
+      description:
+        'Close one tab by pageId and report how many tabs are left. A tab this automation opened itself (openedByAdapter true in page_list) is closed directly — use it to clean up after a scrape. Closing a tab the USER opened discards whatever it holds: that call returns confirmation_required with a single-use confirmToken, and may only be repeated with the token after the user explicitly agreed. Refuses to close the last open tab (last_tab_forbidden) because Chrome exits with its last tab. No beforeunload prompt is shown, so never close a tab with unsaved user work without asking. Blocked while human control is paused.',
+      inputSchema: pageCloseInputSchema,
+      outputSchema: toolOutputSchema(pageCloseOutputShape),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const blocked = blockedWhilePaused();
+      if (blocked) return blocked;
+      return asOperation(async () => {
+        // Ownership decides whether this is a plain cleanup or a destructive
+        // action on the user's own tab; the adapter reports it per tab.
+        let target: PageInfo | undefined;
+        try {
+          const pages = await adapter.listPages();
+          target = pages.find((page) => page.pageId === args.pageId);
+        } catch (error) {
+          return fail('page_close', error);
+        }
+        if (!target) {
+          return fail(
+            'page_close',
+            new BrowserAdapterError(
+              'unknown_page',
+              `Unknown pageId "${args.pageId}"; call page_list for the current tabs`,
+            ),
+          );
+        }
+
+        if (target.openedByAdapter !== true) {
+          const confirmed =
+            args.confirmToken !== undefined &&
+            confirmationGate.consume(args.confirmToken, args.pageId, 'tab_close');
+          if (!confirmed) {
+            const hostname = safeHostname(target.url);
+            const token = confirmationGate.request({
+              pageId: args.pageId,
+              kind: 'tab_close',
+              description: hostname ?? '',
+            });
+            logger.info(
+              { pageId: args.pageId, hostname },
+              'closing a user tab requires explicit confirmation',
+            );
+            const message = `Tab ${args.pageId}${hostname !== undefined ? ` (${hostname})` : ''} was not opened by this automation — it is the user's own tab and closing it discards its state. Ask the user for EXPLICIT approval; only if the user agrees, repeat the identical call with confirmToken. Never close a user tab on your own initiative.`;
+            return {
+              content: [{ type: 'text', text: `confirmation_required: ${message}` }],
+              isError: true,
+              structuredContent: {
+                error: {
+                  code: 'confirmation_required',
+                  message,
+                  retryable: true,
+                  pageId: args.pageId,
+                },
+                confirmToken: token,
+                sensitiveAction: 'tab_close',
+                pageId: args.pageId,
+                url: target.url,
+                ...(hostname !== undefined ? { hostname } : {}),
+              },
+            };
+          }
+          logger.info({ pageId: args.pageId }, 'closing a user tab confirmed');
+        }
+
+        let result;
+        try {
+          result = await adapter.closePage({
+            pageId: args.pageId,
+            ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+          });
+        } catch (error) {
+          return fail('page_close', error);
+        }
+        return okResult(
+          `Closed tab ${result.pageId} (${result.remainingTabs} tab(s) still open).`,
+          {
+            pageId: result.pageId,
+            closed: true,
+            remainingTabs: result.remainingTabs,
+            url: result.url,
+          },
+        );
       });
     },
   );
@@ -974,6 +1081,7 @@ export const browserToolOutputSchemas = {
   page_list: toolOutputSchema(pageListOutputShape),
   page_open: toolOutputSchema(pageOpenOutputShape),
   page_navigate: toolOutputSchema(pageNavigateOutputShape),
+  page_close: toolOutputSchema(pageCloseOutputShape),
   page_snapshot: toolOutputSchema(pageSnapshotOutputShape),
   page_screenshot: toolOutputSchema(pageScreenshotOutputShape),
   page_click: toolOutputSchema(pageClickOutputShape),

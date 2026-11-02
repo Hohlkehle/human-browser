@@ -33,7 +33,7 @@ Security rules (non-negotiable):
 5. Human pause: while automation is paused (states human_required / waiting_for_user / resuming / failed), ALL page_* tools are refused — including read-only ones — so the user can type secrets unseen. Do not retry them; wait for human_resume. If the wait times out (human_timeout), ask the user whether to continue; then call human_required again or human_resume.
 6. Sensitive actions: clicks that look like a purchase, sending a message, or an account change return confirmation_required with a single-use confirmToken. Present the action to the user; ONLY if the user explicitly agrees, repeat the identical call with that token. Never confirm on the user's behalf.
 7. Privacy: results never contain cookies, HTTP headers, localStorage, or credentials. Snapshots and extracted text are redacted ([REDACTED]).
-8. Tabs: pageId values ("page-N") are stable internal ids from page_list / page_open — never URLs or CDP ids. After a human pause, automation continues on the SAME tab. After a reconnect they are re-issued; call page_list again.
+8. Tabs: pageId values ("page-N") are stable internal ids from page_list / page_open — never URLs or CDP ids. After a human pause, automation continues on the SAME tab. After a reconnect they are re-issued; call page_list again. page_close closes one tab: tabs this automation opened (openedByAdapter true) close directly, a tab the USER opened comes back as confirmation_required with a single-use confirmToken, and the last remaining tab is never closed (last_tab_forbidden) because Chrome exits with it.
 9. Errors are structured: { error: { code, message, retryable } }. Retry only when retryable is true and the cause has been addressed (e.g. call browser_connect after not_connected).`;
 
 export interface BrowserMcpServerOptions {
@@ -52,7 +52,7 @@ export interface BrowserMcpServerOptions {
 
 export interface BrowserMcpServerHandle {
   /**
-   * Builds a FRESH McpServer with all 15 tools registered. The SDK requires a
+   * Builds a FRESH McpServer with all 16 tools registered. The SDK requires a
    * dedicated server+transport pair per STDIO connection and per Streamable
    * HTTP request (stateless transports are single-use); all real state lives
    * in the shared adapter/gate/policy, so instances are cheap. The caller
@@ -83,7 +83,7 @@ export function createBrowserMcpServer(options: BrowserMcpServerOptions): Browse
     return mcpServer;
   }
 
-  logger.info('browser MCP server factory created (15 tools per instance)');
+  logger.info('browser MCP server factory created (16 tools per instance)');
 
   return {
     build,

@@ -266,6 +266,54 @@ describe.skipIf(!chromePath)('BrowserAdapter against a test Chrome', () => {
     expect(new Set(after.map((page) => page.pageId)).size).toBe(after.length);
   }, 30_000);
 
+  it('closes a tab it opened and reports the remaining tabs', async () => {
+    const adapter = await newAdapter();
+    const opened = await adapter.openPage({ url: `${fixture.url}/second` });
+    const before = await adapter.listPages();
+    // Ownership is per tab: ours is flagged, the browser's own tab is not.
+    expect(before.find((page) => page.pageId === opened.pageId)?.openedByAdapter).toBe(true);
+    for (const page of before.filter((entry) => entry.pageId !== opened.pageId)) {
+      expect(page.openedByAdapter).toBe(false);
+    }
+
+    const result = await adapter.closePage({ pageId: opened.pageId });
+    expect(result).toMatchObject({
+      pageId: opened.pageId,
+      closed: true,
+      url: `${fixture.url}/second`,
+    });
+    expect(result.remainingTabs).toBe(before.length - 1);
+
+    const after = await adapter.listPages();
+    expect(after.map((page) => page.pageId)).not.toContain(opened.pageId);
+    expect(after.length).toBe(before.length - 1);
+    // Closing an already-closed tab is a typed error, never a crash.
+    await expectCode(() => adapter.closePage({ pageId: opened.pageId }), 'unknown_page');
+  }, 30_000);
+
+  it('refuses to close the last open tab and leaves it usable', async () => {
+    const adapter = await newAdapter();
+    const pages = await adapter.listPages();
+    for (const page of pages.slice(1)) {
+      await adapter.closePage({ pageId: page.pageId });
+    }
+    const remaining = await adapter.listPages();
+    expect(remaining.length).toBe(1);
+
+    await expectCode(
+      () => adapter.closePage({ pageId: remaining[0]!.pageId }),
+      'last_tab_forbidden',
+    );
+    const stillThere = await adapter.listPages();
+    expect(stillThere.length).toBe(1);
+    expect(stillThere[0]!.pageId).toBe(remaining[0]!.pageId);
+  }, 30_000);
+
+  it('reports an unknown pageId for page_close', async () => {
+    const adapter = await newAdapter();
+    await expectCode(() => adapter.closePage({ pageId: 'page-999' }), 'unknown_page');
+  }, 30_000);
+
   it('navigates and redacts sensitive fields in snapshots', async () => {
     const adapter = await newAdapter();
     const pageId = await openForm(adapter);
